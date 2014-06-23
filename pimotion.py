@@ -31,11 +31,11 @@ class Motion:
 		self.videoReduction = 2			# For best results set this to 2. A video recorded at 1920x1440 will be scaled by half and saved at 960x720, reducing noise.
 		self.nightVideoReduction = 2		# scaling for nightMode.
 		self.allowNightMode = False		# If True, light sensitivity is increased at the expense of image quality
-		self.minimumTail = 10.0			# how long to keep testing for motion after last activity before commiting file
+		self.minimumTail = 30.0			# how long to keep testing for motion after last activity before commiting file
 
 		self.framerate = 15			# Video file framerate.
 		self.rotation = 0			# Rotates image (warning: cropping will occur!)
-		self.filepath = "/home/"		# Local file path for video files
+		self.filepath = "/home/pi/video_files/"		# Local file path for video files
 		self.prefix = ""			# Optional filename prefix
 		self.convertToMp4 = False		# Requires GPAC to be installed. Removes original .h264 file
 		self.useDateAsFolders = True		# Creates folders with current year, month and day, then saves file in the day folder.
