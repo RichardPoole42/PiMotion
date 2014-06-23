@@ -49,10 +49,9 @@ class Motion:
 		self.threshold = 20			# How much a pixel value has to change to consider it "motion"
 		self.sensitivity = 25			# How many pixels have to change to trigger motion detection
 							# Good day values with no wind: 20 and 25; with wind: at least 30 and 50; good night values: 15 and 20?
+		self.thresholdBrightness = 5	# average per-pixel brightness below which it is officially dark
 		
 		self.camera = picamera.PiCamera()	# The camera object
-		self.timeWithoutActivity = 0.0		# How long since last motion detection
-		self.lastTimeWithoutActivity = datetime.now()	# How long since last frame without motion detected
 		self.lastStartedRecording = 0.0		# The time at which the last motion detection occurred
 		self.isRecording = False		# Is the camera currently recording? Prevents stopping a camera that is not recording.
 		self.skip = True			# Skips the first frame, to prevent a false positive motion detection (since the first image1 is black)
@@ -60,10 +59,10 @@ class Motion:
 		self.filename = ""
 		self.mp4name = ""
 		self.folderPath = ""
-		self.image1 = Image.new( 'RGB', (self.testWidth, self.testHeight) )	# initializes image1
-		self.image2 = Image.new( 'RGB', (self.testWidth, self.testHeight) )	# initializes image2
-		self.buffer1 = self.image1.load()					# initializes image1 "raw data" buffer
-		self.buffer2 = self.image2.load()					# initializes image2 "raw data" buffer
+		self.oldimage = Image.new( 'RGB', (self.testWidth, self.testHeight) )	# initializes image1
+		self.newimage = Image.new( 'RGB', (self.testWidth, self.testHeight) )	# initializes image2
+		self.oldbuffer = self.oldimage.load()					# initializes image1 "raw data" buffer
+		self.newbuffer = self.newimage.load()					# initializes image2 "raw data" buffer
 											# The difference here is that image1 is handled like a file stream, while the buffer is the actual RGB byte data, if I understand it correctly!
 
 		self.camera.resolution = ( self.captureWidth, self.captureHeight )
@@ -120,6 +119,7 @@ class Motion:
 				print "\n"
 			else:
 				print "Finished recording."
+			subprocess.call(["sudo", "sync"])
 
 	def CaptureTestImage( self ):
 		self.camera.image_effect = "none"
@@ -135,37 +135,78 @@ class Motion:
 
 	def TestMotion( self ):
 		changedPixels = 0
-		self.image2, self.buffer2 = self.CaptureTestImage()
+		self.oldimage = self.newimage
+		self.oldbuffer = self.newbuffer
+		self.newimage, self.newbuffer = self.CaptureTestImage()
 		for x in xrange( self.testStart[0], self.testEnd[0] ):
 			for y in xrange( self.testStart[1], self.testEnd[1] ):
-				pixdiff = abs( self.buffer1[x,y][1] - self.buffer2[x,y][1] )
+				pixdiff = abs( self.oldbuffer[x,y][1] - self.newbuffer[x,y][1] )
 				if pixdiff > self.threshold:
 					changedPixels += 1
 		if changedPixels > self.sensitivity:
-			self.timeWithoutActivity = 0
-			self.lastTimeWithoutActivity = datetime.now()
 			return True
 		else:
-			self.timeWithoutActivity += ( datetime.now() - self.lastTimeWithoutActivity ).total_seconds()
-			self.lastTimeWithoutActivity = datetime.now()
 			return False
+	
+	def OverallLightLevel( self ):
+		image, buffer = self.CaptureTestImage()
+		totalBrightness = 0
+		for x in xrange (self.testStart[0], self.testEnd[0]):
+			for y in xrange (self.testStart[1], self.testEnd[1]):
+				totalBrightness += buffer[x,y][1]
+		return totalBrightness / ((self.testEnd[1] - self.testStart[1]) * (self.testEnd[0] - self.testStart[0]))
+	
+	def TestDarkness( self ):
+		image, buffer = self.CaptureTestImage()
+		totalBrightness = 0
+		for x in xrange (self.testStart[0], self.testEnd[0]):
+			for y in xrange (self.testStart[1], self.testEnd[1]):
+				totalBrightness += buffer[x,y][1]
+		if (totalBrightness / ((self.testEnd[1] - self.testStart[1]) * (self.testEnd[0] - self.testStart[0]))) > self.thresholdBrightness:
+			return True
+		return False
+
 
 motion = Motion()
 print "Warming up camera..."
 time.sleep( 2 )
 print "Camera ready to record. Use Ctrl+C to stop."
+lightLevelRequested = False
+
+def requestLightLevel () {
+	global lightLevelRequested
+	lightLevelRequested = 1
+
+signal.signal(signal.SIGUSR1, printCurrentLightLevel)
 
 try:
+	global lightLevelRequested
+	timeWithoutActivity = 0.0	# time elapsed since last detected activity
+	lastActivityCheck = datetime.now() # last time there was a check
 	while True:
 		timenow = datetime.now()
 		if ( timenow.hour >= motion.timerStart ) and ( timenow.hour <= motion.timerStop ):
 			if motion.usePreviewWindow:
 				motion.camera.start_preview()
 			if motion.TestMotion():
+				timeWithoutActivity = 0
 				motion.StartRecording()
 			else:
-				if ( motion.timeWithoutActivity > motion.minimumTail ):
+				timeWithoutActivity += ( datetime.now() - lastActivityCheck ).total_seconds()
+				if ( timeWithoutActivity > motion.minimumTail ):
 					motion.StopRecording()
+			lastActivityCheck = datetime.now()
+		if motion.TestDarkness():
+			print "someone's put the cover on"
+			if motion.isRecording:
+				motion.camera.stop_recording()
+			motion.camera.stop_preview()
+			motion.camera.close()
+			sys.exit(0)
+		if lightLevelRequested:
+			print "light level is ", motion.OverallLightLevel
+			lightLevelRequested = 0
+			
 		time.sleep( motion.testInterval )
 		motion.skip = False
 except KeyboardInterrupt:
