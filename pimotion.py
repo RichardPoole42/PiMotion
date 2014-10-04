@@ -7,6 +7,7 @@
 import picamera
 import cStringIO
 import os
+import signal
 import sys
 import time
 import subprocess
@@ -30,26 +31,27 @@ class Motion:
 							
 		self.videoReduction = 2			# For best results set this to 2. A video recorded at 1920x1440 will be scaled by half and saved at 960x720, reducing noise.
 		self.nightVideoReduction = 2		# scaling for nightMode.
-		self.allowNightMode = False		# If True, light sensitivity is increased at the expense of image quality
-		self.minimumTail = 30.0			# how long to keep testing for motion after last activity before commiting file
+		self.allowNightMode = True		# Changed 20 Jul If True, light sensitivity is increased at the expense of image quality
+		self.minimumTail = 15.0			# how long to keep testing for motion after last activity before commiting file
 
 		self.framerate = 15			# Video file framerate.
-		self.rotation = 0			# Rotates image (warning: cropping will occur!)
+		self.rotation =180			# (Default 0 - changed to 180 26 Jul) Rotates image (warning: cropping will occur!)
 		self.filepath = "/home/pi/video_files/"		# Local file path for video files
 		self.prefix = ""			# Optional filename prefix
 		self.convertToMp4 = False		# Requires GPAC to be installed. Removes original .h264 file
 		self.useDateAsFolders = True		# Creates folders with current year, month and day, then saves file in the day folder.
 		self.usePreviewWindow = False		# Whether the preview window will be opened when running inside X.
 		
-		self.testInterval = 0.25		# Interval at which stills are captured to test for motion
+		self.testInterval = 0.20		# Reduced from 0.25 Sep 26 Interval at which stills are captured to test for motion
 		self.testWidth = 96			# motion testing horizontal resolution. Use low values!
 		self.testHeight = 72			# motion testing vertical resolution. Use low values!
-		self.testStart = [ 0, 24 ]		# coordinates to start testing for motion
-		self.testEnd = [ 80, 71 ]		# coordinates to finish testing for motion
+		self.testStart = [ 0, 0 ]		# coordinates to start testing for motion  Changed from 0,24 on 7 Aug
+		self.testEnd = [ 95, 71 ]		# Default 80,71 (changed 22 Jul) coordinates to finish testing for motion
 		self.threshold = 20			# How much a pixel value has to change to consider it "motion"
-		self.sensitivity = 25			# How many pixels have to change to trigger motion detection
+		self.sensitivity = 20			# How many pixels have to change to trigger motion detection
 							# Good day values with no wind: 20 and 25; with wind: at least 30 and 50; good night values: 15 and 20?
-		self.thresholdBrightness = 5	# average per-pixel brightness below which it is officially dark
+                                                                  # reduced from 25 8 Aug
+		self.thresholdBrightness = 20	# average per-pixel brightness below which it is officially dark
 		
 		self.camera = picamera.PiCamera()	# The camera object
 		self.lastStartedRecording = 0.0		# The time at which the last motion detection occurred
@@ -82,7 +84,7 @@ class Motion:
 			else:
 				self.filename = self.filepath + self.prefix + "%04d%02d%02d-%02d%02d%02d.h264" % ( timenow.year, timenow.month, timenow.day, timenow.hour, timenow.minute, timenow.second )
 			
-			if (( timenow.hour >= 20 ) or ( timenow.hour <= 5 )) and ( self.allowNightMode == True ):
+			if (( timenow.hour >= 18 ) or ( timenow.hour <= 6 )) and ( self.allowNightMode == True ):
 				self.camera.exposure_mode = "night"
 				self.camera.image_effect = "denoise"
 				self.camera.exposure_compensation = 25
@@ -123,10 +125,18 @@ class Motion:
 
 	def CaptureTestImage( self ):
 		self.camera.image_effect = "none"
-		self.image1 = self.image2
-		self.buffer1 = self.buffer2
 		imageData = cStringIO.StringIO()
 		self.camera.capture( imageData, 'bmp', use_video_port=True, resize=( self.testWidth, self.testHeight) )
+		imageData.seek(0)
+		im = Image.open( imageData )
+		buffer = im.load()
+		imageData.close()
+		return im, buffer
+
+	def CaptureDarknessTestImage( self ):
+		self.camera.image_effect = "none"
+		imageData = cStringIO.StringIO()
+		self.camera.capture( imageData, 'jpeg', use_video_port=True, resize=( self.testWidth, self.testHeight), bayer = True )
 		imageData.seek(0)
 		im = Image.open( imageData )
 		buffer = im.load()
@@ -149,7 +159,7 @@ class Motion:
 			return False
 	
 	def OverallLightLevel( self ):
-		image, buffer = self.CaptureTestImage()
+		image, buffer = self.CaptureDarknessTestImage()
 		totalBrightness = 0
 		for x in xrange (self.testStart[0], self.testEnd[0]):
 			for y in xrange (self.testStart[1], self.testEnd[1]):
@@ -157,12 +167,14 @@ class Motion:
 		return totalBrightness / ((self.testEnd[1] - self.testStart[1]) * (self.testEnd[0] - self.testStart[0]))
 	
 	def TestDarkness( self ):
-		image, buffer = self.CaptureTestImage()
+		image, buffer = self.CaptureDarknessTestImage()
 		totalBrightness = 0
 		for x in xrange (self.testStart[0], self.testEnd[0]):
 			for y in xrange (self.testStart[1], self.testEnd[1]):
 				totalBrightness += buffer[x,y][1]
-		if (totalBrightness / ((self.testEnd[1] - self.testStart[1]) * (self.testEnd[0] - self.testStart[0]))) > self.thresholdBrightness:
+		averageBrightness = totalBrightness / ((self.testEnd[1] - self.testStart[1]) * (self.testEnd[0] - self.testStart[0]))
+		if averageBrightness < self.thresholdBrightness:
+			subprocess.call( ["logger", "light level is " + str(averageBrightness)] )
 			return True
 		return False
 
@@ -171,20 +183,29 @@ motion = Motion()
 print "Warming up camera..."
 time.sleep( 2 )
 print "Camera ready to record. Use Ctrl+C to stop."
+global lightLevelRequested
 lightLevelRequested = False
 
-def requestLightLevel () {
+def requestLightLevel ():
 	global lightLevelRequested
 	lightLevelRequested = 1
 
-signal.signal(signal.SIGUSR1, printCurrentLightLevel)
+signal.signal(signal.SIGUSR1, requestLightLevel)
 
 try:
-	global lightLevelRequested
 	timeWithoutActivity = 0.0	# time elapsed since last detected activity
 	lastActivityCheck = datetime.now() # last time there was a check
+	heartbeatLogged = 0 # whether we have done a heartbeat for this quarter hour
 	while True:
 		timenow = datetime.now()
+		# 15-minute heartbeat
+		if ( timenow.minute % 15 == 0 ):
+			if (heartbeatLogged == 0):
+				subprocess.call( [ "logger", "pimotion is still alive" ] )
+				heartbeatLogged = 1
+		else:
+			heartbeatLogged = 0
+		# end of heartbeat code
 		if ( timenow.hour >= motion.timerStart ) and ( timenow.hour <= motion.timerStop ):
 			if motion.usePreviewWindow:
 				motion.camera.start_preview()
@@ -196,15 +217,18 @@ try:
 				if ( timeWithoutActivity > motion.minimumTail ):
 					motion.StopRecording()
 			lastActivityCheck = datetime.now()
+		print "light level is ", motion.OverallLightLevel()
 		if motion.TestDarkness():
-			print "someone's put the cover on"
-			if motion.isRecording:
-				motion.camera.stop_recording()
-			motion.camera.stop_preview()
-			motion.camera.close()
-			sys.exit(0)
+			subprocess.call( [ "logger", "someone's put the cover on"])
+#			if motion.isRecording:
+#				motion.camera.stop_recording()
+#			motion.camera.stop_preview()
+#			motion.camera.close()
+#			subprocess.call( [ "logger", "pimotion shutting down"] )
+#			subprocess.call( [ "sudo", "/sbin/shutdown", "-h", "now"] )
+#			sys.exit(0)
 		if lightLevelRequested:
-			print "light level is ", motion.OverallLightLevel
+			print "light level is ", motion.OverallLightLevel()
 			lightLevelRequested = 0
 			
 		time.sleep( motion.testInterval )
