@@ -174,7 +174,7 @@ class Motion:
 				totalBrightness += buffer[x,y][1]
 		averageBrightness = totalBrightness / ((self.testEnd[1] - self.testStart[1]) * (self.testEnd[0] - self.testStart[0]))
 		if averageBrightness < self.thresholdBrightness:
-			subprocess.call( ["logger", "light level is " + str(averageBrightness)] )
+			subprocess.call( ["logger", "light level is " + str(averageBrightness) + ", which is dark"] )
 			return True
 		return False
 
@@ -217,7 +217,7 @@ try:
 				if ( timeWithoutActivity > motion.minimumTail ):
 					motion.StopRecording()
 			lastActivityCheck = datetime.now()
-		print "light level is ", motion.OverallLightLevel()
+		print "regular check: light level is ", motion.OverallLightLevel()
 		if motion.TestDarkness():
 			subprocess.call( [ "logger", "someone's put the cover on"])
 #			if motion.isRecording:
@@ -228,7 +228,7 @@ try:
 #			subprocess.call( [ "sudo", "/sbin/shutdown", "-h", "now"] )
 #			sys.exit(0)
 		if lightLevelRequested:
-			print "light level is ", motion.OverallLightLevel()
+			print "requested light level is ", motion.OverallLightLevel()
 			lightLevelRequested = 0
 			
 		time.sleep( motion.testInterval )
