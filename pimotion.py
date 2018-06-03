@@ -29,12 +29,13 @@ class Motion:
 		self.timerStart = 0			# only allows recording after this hour
 		self.timerStop = 24			# only allows recording before this hour
 							
-		self.videoReduction = 2			# For best results set this to 2. A video recorded at 1920x1440 will be scaled by half and saved at 960x720, reducing noise.
+		self.videoReduction = 2			# For best results set this to 2. A video recorded at 1920x1440 will be scaled by half and saved at 960x720, 
+                                                        # reducing noise.
 		self.nightVideoReduction = 2		# scaling for nightMode.
 		self.allowNightMode = True		# Changed 20 Jul If True, light sensitivity is increased at the expense of image quality
-		self.minimumTail = 15.0			# how long to keep testing for motion after last activity before commiting file
-
-		self.framerate = 15			# Video file framerate.
+		self.minimumTail = 10.0			# how long to keep testing for motion after last activity before commiting file
+                                                                # reduced from 15 20180601 20:00
+		self.framerate = 24			# Video file framerate. Changed from 15 to 24 26/5/17 then 20 on 27/5/17
 		self.rotation =180			# (Default 0 - changed to 180 26 Jul) Rotates image (warning: cropping will occur!)
 		self.filepath = "/home/pi/video_files/"		# Local file path for video files
 		self.prefix = ""			# Optional filename prefix
@@ -47,10 +48,10 @@ class Motion:
 		self.testHeight = 72			# motion testing vertical resolution. Use low values!
 		self.testStart = [ 0, 0 ]		# coordinates to start testing for motion  Changed from 0,24 on 7 Aug
 		self.testEnd = [ 95, 71 ]		# Default 80,71 (changed 22 Jul) coordinates to finish testing for motion
-		self.threshold = 20			# How much a pixel value has to change to consider it "motion"
-		self.sensitivity = 20			# How many pixels have to change to trigger motion detection
+		self.threshold = 15			# How much a pixel value has to change to consider it "motion"
+		self.sensitivity = 15 			# How many pixels have to change to trigger motion detection
 							# Good day values with no wind: 20 and 25; with wind: at least 30 and 50; good night values: 15 and 20?
-                                                                  # reduced from 25 8 Aug
+                                                                  # reduced from 25 8 Aug and to 15 on 26/5/17
 		self.thresholdBrightness = 20	# average per-pixel brightness below which it is officially dark
 		
 		self.camera = picamera.PiCamera()	# The camera object
@@ -79,12 +80,15 @@ class Motion:
 			
 			if self.useDateAsFolders:
 				self.folderPath = self.filepath +"%04d/%02d/%02d" % ( timenow.year, timenow.month, timenow.day )
-				subprocess.call( [ "mkdir", "-p", self.folderPath ] )
+
+#			              timebst = timenow.hour +1
+                            
+                         	subprocess.call( [ "mkdir", "-p", self.folderPath ] )
 				self.filename = self.folderPath + "/" + self.prefix + "%02d-%02d-%02d.h264" % ( timenow.hour, timenow.minute, timenow.second )
 			else:
 				self.filename = self.filepath + self.prefix + "%04d%02d%02d-%02d%02d%02d.h264" % ( timenow.year, timenow.month, timenow.day, timenow.hour, timenow.minute, timenow.second )
 			
-			if (( timenow.hour >= 18 ) or ( timenow.hour <= 6 )) and ( self.allowNightMode == True ):
+			if (( timenow.hour >= 21 ) or ( timenow.hour <= 3 )) and ( self.allowNightMode == True ):
 				self.camera.exposure_mode = "night"
 				self.camera.image_effect = "denoise"
 				self.camera.exposure_compensation = 25
